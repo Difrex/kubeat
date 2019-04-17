@@ -8,9 +8,10 @@ import (
 
 var (
 	// Do not accept self logs
-	ignorePod  string
-	configPath string
-	tickTime   int
+	ignorePod        string
+	configPath       string
+	senderConfigPath string
+	tickTime         int
 )
 
 type ignored []*regexp.Regexp
@@ -18,6 +19,7 @@ type ignored []*regexp.Regexp
 func init() {
 	flag.StringVar(&ignorePod, "ignore-pod", "", "regexp for ignoring self logs")
 	flag.StringVar(&configPath, "kube-config", "", "absolute path to the kubectl config")
+	flag.StringVar(&senderConfigPath, "sender-config", "", "absolute path to the sender.json")
 	flag.IntVar(&tickTime, "tick-time", 60, "Metrics tick")
 
 	flag.Parse()

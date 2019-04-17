@@ -91,6 +91,7 @@ func (p *PodLogs) Watch() {
 
 	ignored := ignoredPods(p.Ignored)
 	go p.PodTicker()
+	go p.sender.Ticker()
 
 	w, err := p.Client.CoreV1().Pods(p.Namespace).Watch(metav1.ListOptions{})
 	if err != nil {
@@ -218,11 +219,15 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 			p.Del(pod)
 			continue
 		}
-		err = logSender(p.Namespace, pod, string(line), con)
-		if err != nil {
-			log.Error(err)
-			continue
-		}
+
+		p.mux.Lock()
+		p.sender.Send(p.Namespace, pod, string(line), con)
+		p.mux.Unlock()
+		// err = logSender(p.Namespace, pod, string(line), con)
+		// if err != nil {
+		// 	log.Error(err)
+		// 	continue
+		// }
 	}
 }
 
@@ -251,12 +256,20 @@ func marshalEvent(event watch.Event) WatchEvent {
 }
 
 func NewPodLogs(namespace string, client *kubernetes.Clientset, config *rest.Config) *PodLogs {
-	return &PodLogs{
+	podLogs := &PodLogs{
 		Namespace: namespace,
 		Channels:  make(map[string]chan bool),
 		Client:    client,
 		Config:    config,
+		sc:        GetSenderConfigFromFlags(),
 	}
+
+	err := podLogs.NewSender()
+	if err != nil {
+		panic(err)
+	}
+
+	return podLogs
 }
 
 type LogRequestError struct {
