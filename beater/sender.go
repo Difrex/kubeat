@@ -59,8 +59,6 @@ func GetSenderConfigFromFlags() *SenderConfig {
 		panic(err)
 	}
 
-	log.Info(sc)
-
 	return sc
 }
 
@@ -88,7 +86,6 @@ func (e *ElasticClient) Connect(conf *SenderConfig) (err error) {
 			elastic.SetURL(conf.Hosts...))
 	}
 	e.Client = client
-	log.Infof("%+v", e.Client)
 	return
 }
 
@@ -136,7 +133,12 @@ func (e *ElasticClient) Push(l map[int64]LogMessage) error {
 		bulk = bulk.Add(r)
 	}
 	log.Infof("Sending %d messages to the ElasticSearch", len(l))
-	_, err := bulk.Do(context.Background())
+	resp, err := bulk.Do(context.Background())
+	log.Infof("Indexed. Took %d", resp.Took)
+
+	// Refresh index
+	// e.Client.Index().Refresh(e.indexName())
+
 	return err
 }
 
@@ -178,6 +180,7 @@ func (s *Sender) Send(ns, pod, message, con string) {
 		err := s.Client.Push(s.box.con)
 		if err != nil {
 			log.Error(err)
+			return
 		}
 		s.clean()
 	}
@@ -186,12 +189,11 @@ func (s *Sender) Send(ns, pod, message, con string) {
 func (s *Sender) Ticker() {
 	ticker := time.NewTicker(time.Second * 60)
 	for tick := range ticker.C {
-		if s.len() >= s.box.limit {
+		if s.len() > 0 {
 			err := s.Client.Push(s.box.con)
 			if err != nil {
-				log.Error(err)
+				log.Error(err, " On tick ", tick.Unix())
 			}
-			log.Info("Sent ", s.box.len, " documents on tick ", tick.Unix())
 			s.clean()
 		}
 	}
@@ -234,11 +236,15 @@ func (s *Sender) len() int {
 }
 
 func (s *Sender) add(l LogMessage) {
+	s.box.mux.Lock()
+	defer s.box.mux.Unlock()
 	s.box.con[time.Now().UnixNano()] = l
 	s.box.len = len(s.box.con)
 }
 
 func (s *Sender) clean() {
+	s.box.mux.Lock()
+	defer s.box.mux.Unlock()
 	s.box.con = make(map[int64]LogMessage)
 	s.box.len = 0
 }

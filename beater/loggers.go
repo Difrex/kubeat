@@ -2,6 +2,7 @@ package beater
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"io/ioutil"
@@ -25,11 +26,12 @@ const (
 )
 
 type PodLogs struct {
-	Channels  map[string]chan bool
-	Client    *kubernetes.Clientset
-	Config    *rest.Config
-	Ignored   string
-	Namespace string
+	Channels   map[string]chan bool
+	Client     *kubernetes.Clientset
+	Config     *rest.Config
+	Ignored    string
+	Namespace  string
+	SkipVerify bool
 
 	sc     *SenderConfig
 	sender *Sender
@@ -107,7 +109,7 @@ func (p *PodLogs) Watch() {
 		log.Warn("New event received: ", event.Type)
 		switch event.Type {
 		case "MODIFIED":
-			ch := make(chan bool)
+			ch := make(chan bool, 1)
 			if podCh, ok := p.Channels[name]; !ok && e.State() == "Running" && !ignored.isIgnored(name) {
 				p.Add(name, ch)
 				go p.Run(name, ch, "")
@@ -115,7 +117,7 @@ func (p *PodLogs) Watch() {
 				p.Stop(podCh)
 			}
 		case "ADDED":
-			ch := make(chan bool)
+			ch := make(chan bool, 1)
 			if _, ok := p.Channels[name]; !ok && e.State() == "Running" && !ignored.isIgnored(name) {
 				p.Add(name, ch)
 				go p.Run(name, ch, "")
@@ -136,8 +138,9 @@ func (p *PodLogs) Stop(ch chan bool) {
 
 // Run runs the logwatcher
 func (p *PodLogs) Run(pod string, ch chan bool, con string) {
-	log.Warn("Trying to start watcher for pod ", pod, con)
-	c := http.DefaultClient
+	log.Warnf("Trying to start watcher for pod %s-%s", pod, con)
+	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: p.SkipVerify}
+	c := &http.Client{}
 
 	podApi := p.Config.Host + "/api/v1/namespaces/" + p.Namespace + "/pods/" + pod
 	var req *http.Request
@@ -145,6 +148,10 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 		r, err := http.NewRequest("GET", podApi+"/log?follow=true&tailLines=10", nil)
 		if err != nil {
 			p.Del(pod)
+			if c, ok := p.Channels[pod+"-"+con]; ok {
+				p.Stop(c)
+				p.Del(pod + "-" + con)
+			}
 			return
 		}
 		req = r
@@ -155,6 +162,10 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 			nil)
 		if err != nil {
 			p.Del(pod)
+			if c, ok := p.Channels[pod+"-"+con]; ok {
+				p.Stop(c)
+				p.Del(pod + "-" + con)
+			}
 			return
 		}
 		req = r
@@ -165,6 +176,11 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 	resp, err := c.Do(req)
 	if err != nil {
 		log.Error(err)
+		p.Del(pod)
+		if c, ok := p.Channels[pod+"-"+con]; ok {
+			p.Stop(c)
+			p.Del(pod + "-" + con)
+		}
 		return
 	}
 	defer resp.Body.Close()
@@ -180,6 +196,10 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 		if err != nil {
 			log.Error(err)
 			p.Del(pod)
+			if c, ok := p.Channels[pod+"-"+con]; ok {
+				p.Stop(c)
+				p.Del(pod + "-" + con)
+			}
 			return
 		}
 
@@ -189,40 +209,55 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 		if err != nil {
 			log.Error(err)
 			p.Del(pod)
+			if c, ok := p.Channels[pod+"-"+con]; ok {
+				p.Stop(c)
+				p.Del(pod + "-" + con)
+			}
 			return
 		}
 
 		cons := e.Containers()
 		if len(cons) > 0 {
 			for _, container := range cons {
-				c := make(chan bool)
+				c := make(chan bool, 1)
+				p.Add(pod+"-"+con, c)
 				go p.Run(pod, c, container)
 			}
 		}
 		return
 	}
 
+	log.Warnf("Watcher for pod %s-%s started", pod, con)
 	reader := bufio.NewReader(resp.Body)
 	for {
 		if stop {
-			log.Warn("Stopping logwatcher fro Pod: ", pod)
+			log.Warn("Stopping logwatcher for Pod: ", pod)
 			p.Del(pod)
+			if _, ok := p.Channels[pod+"-"+con]; ok {
+				p.Del(pod + "-" + con)
+			}
 			return
 		}
 		line, err := reader.ReadBytes('\n')
 		if err != nil && err == io.EOF {
-			log.Errorf("Status code is %d for pod %s", resp.StatusCode, pod)
+			log.Errorf("Received EOF for pod %s. Shutdown logwatcher.", pod)
 			p.Del(pod)
+			if _, ok := p.Channels[pod+"-"+con]; ok {
+				p.Del(pod + "-" + con)
+			}
 			return
 		} else if err != nil {
-			log.Errorf("%s %s %s", err.Error(), p.Namespace, pod)
+			log.Errorf("Error received %s for pod %s-%s. Shutdown logwatcher.", err.Error(), pod, con)
 			p.Del(pod)
-			continue
+			if _, ok := p.Channels[pod+"-"+con]; ok {
+				p.Del(pod + "-" + con)
+			}
+			return
 		}
 
-		p.mux.Lock()
+		// p.mux.Lock()
 		p.sender.Send(p.Namespace, pod, string(line), con)
-		p.mux.Unlock()
+		// p.mux.Unlock()
 		// err = logSender(p.Namespace, pod, string(line), con)
 		// if err != nil {
 		// 	log.Error(err)

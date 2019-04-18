@@ -1,0 +1,47 @@
+# Default values for kubeat.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  name: kubeat-logger
+  namespace: difrex
+
+image:
+  repository: lessmore/kubeat
+  tag: 0.1
+  pullPolicy: IfNotPresent
+  args: ["-sender-config", "/data/kubeat.json", "-kube-skip-tls-verify", "-tick-time", "30", "-ignore-pod", "kubeat.*"]
+
+resources:
+  limits:
+   cpu: 100m
+   memory: 382Mi
+  requests:
+   cpu: 100m
+   memory: 382Mi
+
+configmap:
+  # Currently, only the elasticsearch is supported
+  type: elasticsearch
+  hosts: ["localhost:9200"]
+  username: ""
+  password: ""
+  # Daily index prefix
+  index: kubeat
+  # Elasticsearch index document type
+  doc_type: "k8slog"
+  # Bucket soft limit size
+  # Do not create it greter than 4000
+  limit: 1000
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

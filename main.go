@@ -50,6 +50,7 @@ func main() {
 	handleError(err)
 
 	podLogs := beater.NewPodLogs("difrex", client, config)
+	podLogs.SkipVerify = kubeSkipTLSVerify
 
 	pods, err := client.CoreV1().Pods("difrex").List(metav1.ListOptions{})
 	handleError(err)
@@ -63,13 +64,17 @@ func main() {
 		}
 	}
 
-	go podLogs.Watch()
+	go func() {
+		podLogs.Watch()
+		recover()
+	}()
 
 	ticker := time.NewTicker(time.Duration(tickTime) * time.Second)
 
 	for t := range ticker.C {
 		log.Info(t.Unix(), " Num of logwatchers: ", podLogs.Len())
 		log.Info(t.Unix(), " Num of CGOCalls: ", runtime.NumCgoCall())
+		log.Info(t.Unix(), " Num of goroutines ", runtime.NumGoroutine())
 	}
 }
 
