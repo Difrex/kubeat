@@ -8,10 +8,13 @@ import (
 
 var (
 	// Do not accept self logs
-	ignorePod         string
-	configPath        string
-	senderConfigPath  string
+	ignorePod        string
+	configPath       string
+	senderConfigPath string
+	namespace        string
+
 	kubeSkipTLSVerify bool
+	enableWatcher     bool
 	tickTime          int
 )
 
@@ -21,7 +24,9 @@ func init() {
 	flag.StringVar(&ignorePod, "ignore-pod", "", "regexp for ignoring self logs")
 	flag.StringVar(&configPath, "kube-config", "", "absolute path to the kubectl config")
 	flag.StringVar(&senderConfigPath, "sender-config", "", "absolute path to the sender.json")
+	flag.StringVar(&namespace, "kube-namespace", "", "kubernetes namespace")
 	flag.BoolVar(&kubeSkipTLSVerify, "kube-skip-tls-verify", false, "skip k8s TLS verification")
+	flag.BoolVar(&enableWatcher, "enable-watcher", false, "enable k8s pod events")
 	flag.IntVar(&tickTime, "tick-time", 60, "Metrics tick")
 
 	flag.Parse()

@@ -16,6 +16,8 @@ import (
 
 	"io/ioutil"
 
+	"strconv"
+
 	"github.com/google/uuid"
 	"github.com/olivere/elastic"
 )
@@ -62,6 +64,26 @@ func GetSenderConfigFromFlags() *SenderConfig {
 	return sc
 }
 
+func GetTickFromFlags() int {
+	tick := flag.Lookup("tick-time").Value.String()
+	if tick != "" {
+		i, err := strconv.Atoi(tick)
+		if err != nil {
+			panic(err)
+		}
+		return i
+	}
+	return 0
+}
+
+func isWatcherEnabled() bool {
+	watcher := flag.Lookup("enable-watcher").Value.String()
+	if watcher == "true" {
+		return true
+	}
+	return false
+}
+
 type SenderClient interface {
 	Connect(*SenderConfig) error
 	Push(map[int64]LogMessage) error
@@ -82,7 +104,7 @@ func (e *ElasticClient) Connect(conf *SenderConfig) (err error) {
 			elastic.SetBasicAuth(conf.Username, conf.Password))
 	} else {
 		client, err = elastic.NewClient(
-			elastic.SetTraceLog(log.New()),
+			elastic.SetSniff(false),
 			elastic.SetURL(conf.Hosts...))
 	}
 	e.Client = client
@@ -151,7 +173,6 @@ func (p *PodLogs) NewSender() (err error) {
 		e.prefix = p.sc.Index
 		e.docType = p.sc.DocType
 		client = SenderClient(e)
-		log.Infof("%+v", p.sc)
 		if err := client.Connect(p.sc); err != nil {
 			return err
 		}

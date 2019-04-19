@@ -1,13 +1,13 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"time"
 
 	"runtime"
 
 	"os"
+
+	"io/ioutil"
 
 	"github.com/Difrex/kubeat/beater"
 	log "github.com/sirupsen/logrus"
@@ -17,17 +17,9 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-type LogMessage struct {
-	PodName    string                 `json:"pod_name"`
-	Namespace  string                 `json:"namespace"`
-	Container  string                 `json:"container"`
-	Message    string                 `json:"message"`
-	SenderTime time.Time              `json:"sender_time"`
-	Meta       map[string]interface{} `json:"meta"`
-}
-
 const (
-	version = "0.1"
+	version       = "0.1"
+	namespacePath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 )
 
 func main() {
@@ -49,10 +41,10 @@ func main() {
 	client, err := kubernetes.NewForConfig(config)
 	handleError(err)
 
-	podLogs := beater.NewPodLogs("difrex", client, config)
+	podLogs := beater.NewPodLogs(getNamespace(), client, config)
 	podLogs.SkipVerify = kubeSkipTLSVerify
 
-	pods, err := client.CoreV1().Pods("difrex").List(metav1.ListOptions{})
+	pods, err := client.CoreV1().Pods(getNamespace()).List(metav1.ListOptions{})
 	handleError(err)
 
 	ignored := ignoredPods()
@@ -64,10 +56,11 @@ func main() {
 		}
 	}
 
-	go func() {
-		podLogs.Watch()
-		recover()
-	}()
+	if enableWatcher {
+		go podLogs.Watch()
+	} else {
+		go podLogs.PodTicker()
+	}
 
 	ticker := time.NewTicker(time.Duration(tickTime) * time.Second)
 
@@ -76,23 +69,6 @@ func main() {
 		log.Info(t.Unix(), " Num of CGOCalls: ", runtime.NumCgoCall())
 		log.Info(t.Unix(), " Num of goroutines ", runtime.NumGoroutine())
 	}
-}
-
-func logSender(ns, pod, message, con string) error {
-	log := LogMessage{
-		Namespace:  ns,
-		PodName:    pod,
-		Message:    message,
-		Container:  con,
-		SenderTime: time.Now(),
-	}
-	data, err := json.Marshal(log)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println(string(data))
-	return nil
 }
 
 func handleError(err error) {
@@ -106,4 +82,15 @@ func isInK8S() bool {
 		return true
 	}
 	return false
+}
+
+func getNamespace() string {
+	f, err := os.Open(namespacePath)
+	if os.IsExist(err) {
+		data, err := ioutil.ReadAll(f)
+		handleError(err)
+		return string(data)
+	}
+	f.Close()
+	return namespace
 }

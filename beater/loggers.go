@@ -26,13 +26,15 @@ const (
 )
 
 type PodLogs struct {
-	Channels   map[string]chan bool
-	Client     *kubernetes.Clientset
-	Config     *rest.Config
-	Ignored    string
-	Namespace  string
-	SkipVerify bool
+	Channels      map[string]chan bool
+	Client        *kubernetes.Clientset
+	Config        *rest.Config
+	Ignored       string
+	Namespace     string
+	SkipVerify    bool
+	EnableWatcher bool
 
+	tick   int
 	sc     *SenderConfig
 	sender *Sender
 	mux    sync.Mutex
@@ -65,13 +67,18 @@ func (p *PodLogs) Len() int {
 }
 
 func (p *PodLogs) PodTicker() {
+
+	if !p.EnableWatcher {
+		go p.sender.Ticker()
+	}
+
 	ignored := ignoredPods(p.Ignored)
-	ticker := time.NewTicker(time.Second * time.Duration(30))
+	ticker := time.NewTicker(time.Second * time.Duration(p.tick))
 	for c := range ticker.C {
 		log.Warn("New tick in pod watcher")
 
 		timeout := int64(10)
-		pods, err := p.Client.CoreV1().Pods("difrex").List(metav1.ListOptions{TimeoutSeconds: &timeout})
+		pods, err := p.Client.CoreV1().Pods(p.Namespace).List(metav1.ListOptions{TimeoutSeconds: &timeout})
 		if err != nil {
 			log.Error("Error on tick: ", c, " ", err.Error())
 			continue
@@ -79,10 +86,12 @@ func (p *PodLogs) PodTicker() {
 
 		log.Info("Get pods: ", len(pods.Items))
 		for _, pod := range pods.Items {
-			if _, ok := p.Channels[pod.Name]; !ok && pod.Status.Phase == "Running" && !ignored.isIgnored(pod.Name) {
+			if podCh, ok := p.Channels[pod.Name]; !ok && pod.Status.Phase == "Running" && !ignored.isIgnored(pod.Name) {
 				ch := make(chan bool)
 				p.Add(pod.Name, ch)
 				go p.Run(pod.Name, ch, "")
+			} else if ok && pod.Status.Phase != "Running" || ignored.isIgnored(pod.Name) {
+				p.Stop(podCh)
 			}
 		}
 	}
@@ -91,9 +100,10 @@ func (p *PodLogs) PodTicker() {
 // Watch watches for k8s events
 func (p *PodLogs) Watch() {
 
-	ignored := ignoredPods(p.Ignored)
 	go p.PodTicker()
 	go p.sender.Ticker()
+
+	ignored := ignoredPods(p.Ignored)
 
 	w, err := p.Client.CoreV1().Pods(p.Namespace).Watch(metav1.ListOptions{})
 	if err != nil {
@@ -292,11 +302,13 @@ func marshalEvent(event watch.Event) WatchEvent {
 
 func NewPodLogs(namespace string, client *kubernetes.Clientset, config *rest.Config) *PodLogs {
 	podLogs := &PodLogs{
-		Namespace: namespace,
-		Channels:  make(map[string]chan bool),
-		Client:    client,
-		Config:    config,
-		sc:        GetSenderConfigFromFlags(),
+		Namespace:     namespace,
+		Channels:      make(map[string]chan bool),
+		Client:        client,
+		Config:        config,
+		EnableWatcher: isWatcherEnabled(),
+		tick:          GetTickFromFlags(),
+		sc:            GetSenderConfigFromFlags(),
 	}
 
 	err := podLogs.NewSender()
