@@ -46,3 +46,9 @@ func isInK8S() bool {
 	}
 	return false
 }
+
+func getESCredsFromEnv() (string, string) {
+	user := os.Getenv(ELASTIC_ENV_USERNAME)
+	pass := os.Getenv(ELASTIC_ENV_PASSWORD)
+	return user, pass
+}

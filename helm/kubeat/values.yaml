@@ -2,21 +2,28 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-replicaCount: 1
-
 rbac:
   create: true
 
 serviceAccount:
   create: true
   name: kubeat-logger
-  namespace: difrex
+  namespace: default
 
 image:
   repository: lessmore/kubeat
   tag: 0.1
   pullPolicy: IfNotPresent
-  args: ["-sender-config", "/data/kubeat.json", "-kube-skip-tls-verify", "-tick-time", "30", "-ignore-pod", "kubeat.*"]
+  args:
+    - "-sender-config"
+    - "/data/kubeat.json"
+    - "-kube-skip-tls-verify"
+    - "-tick-time"
+    - "30"
+    - "-ignore-pod"
+    - "kubeat.*"
+    - "-kube-namespace"
+    - "default"
 
 resources:
   limits:
@@ -29,9 +36,7 @@ resources:
 configmap:
   # Currently, only the elasticsearch is supported
   type: elasticsearch
-  hosts: ["localhost:9200"]
-  username: ""
-  password: ""
+  hosts: ["https://elastic.example.com:9200"]
   # Daily index prefix
   index: kubeat
   # Elasticsearch index document type
@@ -40,8 +45,7 @@ configmap:
   # Do not create it greter than 4000
   limit: 1000
 
-nodeSelector: {}
-
-tolerations: []
-
-affinity: {}
+secret:
+  create: true
+  username: "elastic"
+  password: "password"

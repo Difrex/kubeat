@@ -22,6 +22,11 @@ import (
 	"github.com/olivere/elastic"
 )
 
+const (
+	ELASTIC_ENV_USERNAME = "KUBEAT_ELASTIC_USERNAME"
+	ELASTIC_ENV_PASSWORD = "KUBEAT_ELASTIC_PASSWORD"
+)
+
 type LogMessage struct {
 	PodName    string                 `json:"pod_name"`
 	Namespace  string                 `json:"namespace"`
@@ -172,6 +177,11 @@ func (p *PodLogs) NewSender() (err error) {
 		e := &ElasticClient{}
 		e.prefix = p.sc.Index
 		e.docType = p.sc.DocType
+
+		if p.sc.Username == "" || p.sc.Password == "" {
+			p.sc.Username, p.sc.Password = getESCredsFromEnv()
+		}
+
 		client = SenderClient(e)
 		if err := client.Connect(p.sc); err != nil {
 			return err

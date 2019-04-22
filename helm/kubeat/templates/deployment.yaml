@@ -31,6 +31,19 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: {{ toJson .Values.image.args }}
+          {{- if .Values.secret.create }}
+          env:
+            - name: KUBEAT_ELASTIC_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-{{ template "kubeat.fullname" . }}-elastic
+                  key: username
+            - name: KUBEAT_ELASTIC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-{{ template "kubeat.fullname" . }}-elastic
+                  key: password
+          {{- end }}
           volumeMounts:
             - name: {{ template "kubeat.fullname" . }}-config
               mountPath: /data
