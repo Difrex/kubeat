@@ -251,18 +251,12 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 		line, err := reader.ReadBytes('\n')
 		if err != nil && err == io.EOF {
 			log.Errorf("Received EOF for pod %s. Shutdown logwatcher.", pod)
-			p.Del(pod)
-			if _, ok := p.Channels[pod+"-"+con]; ok {
-				p.Del(pod + "-" + con)
-			}
-			return
+			p.Stop(ch)
+			continue
 		} else if err != nil {
 			log.Errorf("Error received %s for pod %s-%s. Shutdown logwatcher.", err.Error(), pod, con)
-			p.Del(pod)
-			if _, ok := p.Channels[pod+"-"+con]; ok {
-				p.Del(pod + "-" + con)
-			}
-			return
+			p.Stop(ch)
+			continue
 		}
 
 		// p.mux.Lock()
