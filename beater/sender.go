@@ -102,11 +102,16 @@ func (p *PodLogs) NewSender() (err error) {
 		}
 
 		client = SenderClient(e)
-		if err := client.Connect(p.sc); err != nil {
-			return err
-		}
+	case "tcp":
+		c := &TCPClient{}
+		c.conf = p.sc
+		client = SenderClient(c)
 	default:
 		return errors.New("Wrong sender type")
+	}
+
+	if err := client.Connect(p.sc); err != nil {
+		return err
 	}
 
 	sender.Client = client
