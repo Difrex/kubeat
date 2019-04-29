@@ -107,19 +107,15 @@ func (p *PodLogs) GetWatchersFromDBLen() int {
 	txn := p.db.Txn(false)
 	defer txn.Abort()
 
-	i, err := txn.Get("logwatchers", "id", "*")
+	i, err := txn.Get("logwatchers", "id")
 	if err != nil {
 		log.Error(err)
 		return -1
 	}
 
 	var c int
-	for {
-		if i.Next() != nil {
-			c++
-		} else {
-			break
-		}
+	for item := i.Next(); item != nil; item = i.Next() {
+		c++
 	}
 
 	return c
