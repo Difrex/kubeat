@@ -14,6 +14,7 @@ import (
 
 	"strings"
 
+	memdb "github.com/hashicorp/go-memdb"
 	log "github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -34,6 +35,7 @@ type PodLogs struct {
 	SkipVerify    bool
 	EnableWatcher bool
 
+	db     *memdb.MemDB
 	tick   int
 	sc     *SenderConfig
 	sender *Sender
@@ -49,17 +51,21 @@ func (p *PodLogs) Add(pod string, ch chan bool) {
 
 // Del deletes pod control channel
 func (p *PodLogs) Del(pod string) {
-	p.mux.Lock()
-	new := make(map[string]chan bool)
-	if p.Channels != nil {
-		for k, v := range p.Channels {
-			if k != pod {
-				new[k] = v
-			}
-		}
+	// p.mux.Lock()
+	// new := make(map[string]chan bool)
+	// if p.Channels != nil {
+	// 	for k, v := range p.Channels {
+	// 		if k != pod {
+	// 			new[k] = v
+	// 		}
+	// 	}
+	// }
+	// p.Channels = new
+	// p.mux.Unlock()
+	err := p.DelWatcherFromDB(pod)
+	if err != nil {
+		log.Error(err)
 	}
-	p.Channels = new
-	p.mux.Unlock()
 }
 
 func (p *PodLogs) Len() int {
@@ -84,15 +90,26 @@ func (p *PodLogs) PodTicker() {
 			continue
 		}
 
-		log.Info("Get pods: ", len(pods.Items))
+		log.Infof("Got %d pods", len(pods.Items))
 		for _, pod := range pods.Items {
-			if podCh, ok := p.Channels[pod.Name]; !ok && pod.Status.Phase == "Running" && !ignored.isIgnored(pod.Name) {
-				ch := make(chan bool)
-				p.Add(pod.Name, ch)
+			if ok, watcher, err := p.IsWatcherInTheDB(pod.Name); !ok && err == nil && pod.Status.Phase == "Running" && !ignored.isIgnored(pod.Name) {
+				ch, err := p.AddWatcherToDb(pod.Name)
+				if err != nil {
+					log.Error(err)
+					continue
+				}
 				go p.Run(pod.Name, ch, "")
-			} else if ok && pod.Status.Phase != "Running" || ignored.isIgnored(pod.Name) {
-				p.Stop(podCh)
+			} else if ok && err == nil && pod.Status.Phase != "Running" || ignored.isIgnored(pod.Name) {
+				p.Stop(watcher.Chan)
 			}
+			// if podCh, ok := p.Channels[pod.Name]; !ok && pod.Status.Phase == "Running" && !ignored.isIgnored(pod.Name) {
+			// 	p.AddWatcherToDb(pod.Name)
+			// 	ch := make(chan bool)
+			// 	p.Add(pod.Name, ch)
+			// 	go p.Run(pod.Name, ch, "")
+			// } else if ok && pod.Status.Phase != "Running" || ignored.isIgnored(pod.Name) {
+			// 	p.Stop(podCh)
+			// }
 		}
 	}
 }
@@ -205,12 +222,14 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 		data, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			log.Error(err)
-			p.Del(pod)
-			if c, ok := p.Channels[pod+"-"+con]; ok {
-				p.Stop(c)
+			if ok, watcher, _ := p.IsWatcherInTheDB(pod + "-" + con); ok {
+				p.Stop(watcher.Chan)
 				p.Del(pod + "-" + con)
 			}
-			return
+			if ok, watcher, _ := p.IsWatcherInTheDB(pod); ok {
+				p.Del(pod)
+				p.Stop(watcher.Chan)
+			}
 		}
 
 		log.Error(string(data))
@@ -218,10 +237,13 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 		err = json.Unmarshal(data, &e)
 		if err != nil {
 			log.Error(err)
-			p.Del(pod)
-			if c, ok := p.Channels[pod+"-"+con]; ok {
-				p.Stop(c)
-				p.Del(pod + "-" + con)
+			if ok, watcher, _ := p.IsWatcherInTheDB(pod + "-" + con); ok {
+				p.Del(watcher.Name)
+				p.Stop(watcher.Chan)
+			}
+			if ok, watcher, _ := p.IsWatcherInTheDB(pod); ok {
+				p.Del(watcher.Name)
+				p.Stop(watcher.Chan)
 			}
 			return
 		}
@@ -229,9 +251,12 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 		cons := e.Containers()
 		if len(cons) > 0 {
 			for _, container := range cons {
-				c := make(chan bool, 1)
-				p.Add(pod+"-"+con, c)
-				go p.Run(pod, c, container)
+				ch, err := p.AddWatcherToDb(pod + "-" + con)
+				if err != nil {
+					log.Error(err)
+					continue
+				}
+				go p.Run(pod, ch, container)
 			}
 		}
 		return
@@ -242,9 +267,11 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 	for {
 		if stop {
 			log.Warn("Stopping logwatcher for Pod: ", pod)
-			p.Del(pod)
-			if _, ok := p.Channels[pod+"-"+con]; ok {
-				p.Del(pod + "-" + con)
+			if ok, watcher, _ := p.IsWatcherInTheDB(pod + "-" + con); ok {
+				p.Del(watcher.Name)
+			}
+			if ok, watcher, _ := p.IsWatcherInTheDB(pod); ok {
+				p.Del(watcher.Name)
 			}
 			return
 		}
@@ -305,7 +332,13 @@ func NewPodLogs(namespace string, client *kubernetes.Clientset, config *rest.Con
 		sc:            GetSenderConfigFromFlags(),
 	}
 
-	err := podLogs.NewSender()
+	db, err := NewDB()
+	if err != nil {
+		panic(err)
+	}
+	podLogs.db = db
+
+	err = podLogs.NewSender()
 	if err != nil {
 		panic(err)
 	}

@@ -11,7 +11,6 @@ import (
 
 	"github.com/Difrex/kubeat/beater"
 	log "github.com/sirupsen/logrus"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -44,17 +43,17 @@ func main() {
 	podLogs := beater.NewPodLogs(getNamespace(), client, config)
 	podLogs.SkipVerify = kubeSkipTLSVerify
 
-	pods, err := client.CoreV1().Pods(getNamespace()).List(metav1.ListOptions{})
-	handleError(err)
+	// pods, err := client.CoreV1().Pods(getNamespace()).List(metav1.ListOptions{})
+	// handleError(err)
 
-	ignored := ignoredPods()
-	for _, pod := range pods.Items {
-		if !ignored.isIgnored(pod.Name) && pod.Status.Phase == "Running" {
-			ch := make(chan bool)
-			go podLogs.Run(pod.Name, ch, "")
-			podLogs.Add(pod.Name, ch)
-		}
-	}
+	// ignored := ignoredPods()
+	// for _, pod := range pods.Items {
+	// 	if !ignored.isIgnored(pod.Name) && pod.Status.Phase == "Running" {
+	// 		ch := make(chan bool)
+	// 		go podLogs.Run(pod.Name, ch, "")
+	// 		podLogs.Add(pod.Name, ch)
+	// 	}
+	// }
 
 	if enableWatcher {
 		go podLogs.Watch()
