@@ -69,7 +69,7 @@ func (p *PodLogs) Del(pod string) {
 }
 
 func (p *PodLogs) Len() int {
-	return len(p.Channels)
+	return p.GetWatchersFromDBLen()
 }
 
 func (p *PodLogs) PodTicker() {
@@ -101,6 +101,8 @@ func (p *PodLogs) PodTicker() {
 				go p.Run(pod.Name, ch, "")
 			} else if ok && err == nil && pod.Status.Phase != "Running" || ignored.isIgnored(pod.Name) {
 				p.Stop(watcher.Chan)
+			} else if err != nil {
+				log.Error(err)
 			}
 			// if podCh, ok := p.Channels[pod.Name]; !ok && pod.Status.Phase == "Running" && !ignored.isIgnored(pod.Name) {
 			// 	p.AddWatcherToDb(pod.Name)
@@ -213,9 +215,9 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 	defer resp.Body.Close()
 
 	var stop bool
-	go func(s *bool, ch chan bool) {
+	go func(s bool, ch chan bool) {
 		stop = <-ch
-	}(&stop, ch)
+	}(stop, ch)
 
 	if resp.StatusCode == 400 {
 		e := &LogRequestError{}
@@ -279,21 +281,26 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 		if err != nil && err == io.EOF {
 			log.Errorf("Received EOF for pod %s. Shutdown logwatcher.", pod)
 			p.Stop(ch)
+			if ok, watcher, _ := p.IsWatcherInTheDB(pod + "-" + con); ok {
+				p.Del(watcher.Name)
+			}
+			if ok, watcher, _ := p.IsWatcherInTheDB(pod); ok {
+				p.Del(watcher.Name)
+			}
 			continue
 		} else if err != nil {
 			log.Errorf("Error received %s for pod %s-%s. Shutdown logwatcher.", err.Error(), pod, con)
 			p.Stop(ch)
+			if ok, watcher, _ := p.IsWatcherInTheDB(pod + "-" + con); ok {
+				p.Del(watcher.Name)
+			}
+			if ok, watcher, _ := p.IsWatcherInTheDB(pod); ok {
+				p.Del(watcher.Name)
+			}
 			continue
 		}
 
-		// p.mux.Lock()
 		p.sender.Send(p.Namespace, pod, string(line), con)
-		// p.mux.Unlock()
-		// err = logSender(p.Namespace, pod, string(line), con)
-		// if err != nil {
-		// 	log.Error(err)
-		// 	continue
-		// }
 	}
 }
 

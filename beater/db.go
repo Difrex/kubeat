@@ -2,6 +2,7 @@ package beater
 
 import (
 	memdb "github.com/hashicorp/go-memdb"
+	log "github.com/sirupsen/logrus"
 )
 
 type LogWatcher struct {
@@ -70,6 +71,7 @@ func (p *PodLogs) GetWatcherFromDB(pod string) (*LogWatcher, error) {
 }
 
 func (p *PodLogs) DelWatcherFromDB(pod string) error {
+	log.Debugf("Trying delete pod %s from DB", pod)
 	watcher, err := p.GetWatcherFromDB(pod)
 	if err != nil {
 		return err
@@ -99,4 +101,26 @@ func (p *PodLogs) IsWatcherInTheDB(pod string) (bool, *LogWatcher, error) {
 	}
 
 	return false, nil, nil
+}
+
+func (p *PodLogs) GetWatchersFromDBLen() int {
+	txn := p.db.Txn(false)
+	defer txn.Abort()
+
+	i, err := txn.Get("logwatchers", "id", "*")
+	if err != nil {
+		log.Error(err)
+		return -1
+	}
+
+	var c int
+	for {
+		if i.Next() != nil {
+			c++
+		} else {
+			break
+		}
+	}
+
+	return c
 }
