@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -23,7 +24,8 @@ import (
 )
 
 const (
-	containersErrorRe string = `.*choose one of: \[(.*)\] .*`
+	containersErrorRe   string = `.*choose one of: \[(.*)\] .*`
+	containerCreatingRe string = `.*ContainerCreating.*`
 )
 
 type PodLogs struct {
@@ -161,16 +163,27 @@ func (p *PodLogs) Watch() {
 }
 
 func (p *PodLogs) Stop(ch chan bool) {
-	log.Warn("Trying stopping a watcher")
 	ch <- true
 }
 
-// Run runs the logwatcher
-func (p *PodLogs) Run(pod string, ch chan bool, con string) {
-	log.Warnf("Trying to start watcher for pod %s-%s", pod, con)
-	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: p.SkipVerify}
-	c := &http.Client{}
+func (p *PodLogs) Shutdown(pod, con string) {
+	l := fmt.Sprintf("Shutdown a watcher for `%s'", pod)
+	if con != "" {
+		l = fmt.Sprintf("Shutdown a watcher for `%s-%s'", pod, con)
+	}
+	log.Warnf(l)
+	if ok, watcher, _ := p.IsWatcherInTheDB(pod + "-" + con); ok {
+		p.Del(pod + "-" + con)
+		p.Stop(watcher.Chan)
+	}
+	if ok, watcher, _ := p.IsWatcherInTheDB(pod); ok {
+		p.Del(pod)
+		p.Stop(watcher.Chan)
+	}
+}
 
+func (p *PodLogs) newLogRequest(pod, con string) (*http.Request, error) {
+	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: p.SkipVerify}
 	podApi := p.Config.Host + "/api/v1/namespaces/" + p.Namespace + "/pods/" + pod
 	var req *http.Request
 	if con == "" {
@@ -181,7 +194,7 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 				p.Stop(c)
 				p.Del(pod + "-" + con)
 			}
-			return
+			return r, err
 		}
 		req = r
 	} else {
@@ -195,12 +208,25 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 				p.Stop(c)
 				p.Del(pod + "-" + con)
 			}
-			return
+			return r, err
 		}
 		req = r
 	}
 
 	req.Header.Add("Authorization", "Bearer "+p.Config.BearerToken)
+	return req, nil
+}
+
+// Run runs the logwatcher
+func (p *PodLogs) Run(pod string, ch chan bool, con string) {
+	log.Warnf("Trying to start watcher for pod %s-%s", pod, con)
+	c := &http.Client{}
+
+	req, err := p.newLogRequest(pod, con)
+	if err != nil {
+		log.Error(err)
+		p.Shutdown(pod, con)
+	}
 
 	resp, err := c.Do(req)
 	if err != nil {
@@ -224,29 +250,21 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 		data, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			log.Error(err)
-			if ok, watcher, _ := p.IsWatcherInTheDB(pod + "-" + con); ok {
-				p.Stop(watcher.Chan)
-				p.Del(pod + "-" + con)
-			}
-			if ok, watcher, _ := p.IsWatcherInTheDB(pod); ok {
-				p.Del(pod)
-				p.Stop(watcher.Chan)
-			}
+			p.Shutdown(pod, con)
+			return
 		}
 
 		log.Error(string(data))
+		if e.IsContanerCreating() {
+			log.Error("Container not created yet")
+			p.Shutdown(pod, con)
+			return
+		}
 
 		err = json.Unmarshal(data, &e)
 		if err != nil {
 			log.Error(err)
-			if ok, watcher, _ := p.IsWatcherInTheDB(pod + "-" + con); ok {
-				p.Del(watcher.Name)
-				p.Stop(watcher.Chan)
-			}
-			if ok, watcher, _ := p.IsWatcherInTheDB(pod); ok {
-				p.Del(watcher.Name)
-				p.Stop(watcher.Chan)
-			}
+			p.Shutdown(pod, con)
 			return
 		}
 
@@ -269,34 +287,17 @@ func (p *PodLogs) Run(pod string, ch chan bool, con string) {
 	for {
 		if stop {
 			log.Warn("Stopping logwatcher for Pod: ", pod)
-			if ok, watcher, _ := p.IsWatcherInTheDB(pod + "-" + con); ok {
-				p.Del(watcher.Name)
-			}
-			if ok, watcher, _ := p.IsWatcherInTheDB(pod); ok {
-				p.Del(watcher.Name)
-			}
+			p.Shutdown(pod, con)
 			return
 		}
 		line, err := reader.ReadBytes('\n')
 		if err != nil && err == io.EOF {
 			log.Errorf("Received EOF for pod %s. Shutdown logwatcher.", pod)
-			p.Stop(ch)
-			if ok, watcher, _ := p.IsWatcherInTheDB(pod + "-" + con); ok {
-				p.Del(watcher.Name)
-			}
-			if ok, watcher, _ := p.IsWatcherInTheDB(pod); ok {
-				p.Del(watcher.Name)
-			}
+			p.Shutdown(pod, con)
 			continue
 		} else if err != nil {
 			log.Errorf("Error received %s for pod %s-%s. Shutdown logwatcher.", err.Error(), pod, con)
-			p.Stop(ch)
-			if ok, watcher, _ := p.IsWatcherInTheDB(pod + "-" + con); ok {
-				p.Del(watcher.Name)
-			}
-			if ok, watcher, _ := p.IsWatcherInTheDB(pod); ok {
-				p.Del(watcher.Name)
-			}
+			p.Shutdown(pod, con)
 			continue
 		}
 
@@ -361,6 +362,20 @@ type LogRequestError struct {
 	Message    string      `json:"message"`
 	Reason     string      `json:"reason"`
 	Code       int         `json:"code"`
+}
+
+func (l *LogRequestError) IsContanerCreating() bool {
+	re, err := regexp.Compile(containerCreatingRe)
+	if err != nil {
+		log.Error(err)
+		return false
+	}
+
+	if re.MatchString(l.Message) {
+		return true
+	}
+
+	return false
 }
 
 func (l *LogRequestError) Containers() (containers []string) {
