@@ -43,18 +43,6 @@ func main() {
 	podLogs := beater.NewPodLogs(getNamespace(), client, config)
 	podLogs.SkipVerify = kubeSkipTLSVerify
 
-	// pods, err := client.CoreV1().Pods(getNamespace()).List(metav1.ListOptions{})
-	// handleError(err)
-
-	// ignored := ignoredPods()
-	// for _, pod := range pods.Items {
-	// 	if !ignored.isIgnored(pod.Name) && pod.Status.Phase == "Running" {
-	// 		ch := make(chan bool)
-	// 		go podLogs.Run(pod.Name, ch, "")
-	// 		podLogs.Add(pod.Name, ch)
-	// 	}
-	// }
-
 	if enableWatcher {
 		go podLogs.Watch()
 	} else {

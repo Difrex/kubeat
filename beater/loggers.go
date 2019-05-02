@@ -94,14 +94,14 @@ func (p *PodLogs) PodTicker() {
 
 		log.Infof("Got %d pods", len(pods.Items))
 		for _, pod := range pods.Items {
-			if ok, watcher, err := p.IsWatcherInTheDB(pod.Name); !ok && err == nil && pod.Status.Phase == "Running" && !ignored.isIgnored(pod.Name) {
+			if ok, watcher, err := p.IsWatcherInTheDB(pod.Name); !ok && err == nil && pod.Status.Phase == "Running" && !ignored.isIgnored(pod) {
 				ch, err := p.AddWatcherToDb(pod.Name)
 				if err != nil {
 					log.Error(err)
 					continue
 				}
 				go p.Run(pod.Name, ch, "")
-			} else if ok && err == nil && pod.Status.Phase != "Running" || ignored.isIgnored(pod.Name) {
+			} else if ok && err == nil && pod.Status.Phase != "Running" || ignored.isIgnored(pod) {
 				p.Stop(watcher.Chan)
 			} else if err != nil {
 				log.Error(err)
@@ -124,7 +124,7 @@ func (p *PodLogs) Watch() {
 	go p.PodTicker()
 	go p.sender.Ticker()
 
-	ignored := ignoredPods(p.Ignored)
+	// ignored := ignoredPods(p.Ignored)
 
 	w, err := p.Client.CoreV1().Pods(p.Namespace).Watch(metav1.ListOptions{})
 	if err != nil {
@@ -141,7 +141,7 @@ func (p *PodLogs) Watch() {
 		switch event.Type {
 		case "MODIFIED":
 			ch := make(chan bool, 1)
-			if podCh, ok := p.Channels[name]; !ok && e.State() == "Running" && !ignored.isIgnored(name) {
+			if podCh, ok := p.Channels[name]; !ok && e.State() == "Running" {
 				p.Add(name, ch)
 				go p.Run(name, ch, "")
 			} else if ok && e.State() != "Running" {
@@ -149,7 +149,7 @@ func (p *PodLogs) Watch() {
 			}
 		case "ADDED":
 			ch := make(chan bool, 1)
-			if _, ok := p.Channels[name]; !ok && e.State() == "Running" && !ignored.isIgnored(name) {
+			if _, ok := p.Channels[name]; !ok && e.State() == "Running" {
 				p.Add(name, ch)
 				go p.Run(name, ch, "")
 			}

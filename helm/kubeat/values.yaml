@@ -2,6 +2,8 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
+disable_self_logging: "yes"
+
 rbac:
   create: true
 
@@ -20,8 +22,6 @@ image:
     - "-kube-skip-tls-verify"
     - "-tick-time"
     - "30"
-    - "-ignore-pod"
-    - "kubeat.*"
     - "-kube-namespace"
     - "default"
 
@@ -36,7 +36,7 @@ resources:
 configmap:
   # Currently, only the elasticsearch is supported
   type: elasticsearch
-  hosts: ["https://elastic.example.com:9200"]
+  hosts: ["http://localhost:9200"]
   # Daily index prefix
   index: kubeat
   # Elasticsearch index document type
