@@ -11,7 +11,7 @@ import (
 type ignored []*regexp.Regexp
 
 const (
-	annotation_key   = "kubeat_disable"
+	annotation_key   = "kubeat-disable"
 	annotation_value = "yes"
 )
 

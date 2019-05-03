@@ -101,19 +101,11 @@ func (p *PodLogs) PodTicker() {
 					continue
 				}
 				go p.Run(pod.Name, ch, "")
-			} else if ok && err == nil && pod.Status.Phase != "Running" || ignored.isIgnored(pod) {
+			} else if ok && err == nil && pod.Status.Phase != "Running" || ok && ignored.isIgnored(pod) {
 				p.Stop(watcher.Chan)
 			} else if err != nil {
 				log.Error(err)
 			}
-			// if podCh, ok := p.Channels[pod.Name]; !ok && pod.Status.Phase == "Running" && !ignored.isIgnored(pod.Name) {
-			// 	p.AddWatcherToDb(pod.Name)
-			// 	ch := make(chan bool)
-			// 	p.Add(pod.Name, ch)
-			// 	go p.Run(pod.Name, ch, "")
-			// } else if ok && pod.Status.Phase != "Running" || ignored.isIgnored(pod.Name) {
-			// 	p.Stop(podCh)
-			// }
 		}
 	}
 }

@@ -42,6 +42,7 @@ func main() {
 
 	podLogs := beater.NewPodLogs(getNamespace(), client, config)
 	podLogs.SkipVerify = kubeSkipTLSVerify
+	podLogs.Ignored = ignorePod
 
 	if enableWatcher {
 		go podLogs.Watch()
