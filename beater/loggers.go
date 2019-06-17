@@ -4,19 +4,19 @@ import (
 	"bufio"
 	"crypto/tls"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
-	"regexp"
-
-	"strings"
-
 	memdb "github.com/hashicorp/go-memdb"
 	log "github.com/sirupsen/logrus"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
@@ -26,6 +26,9 @@ import (
 const (
 	containersErrorRe   string = `.*choose one of: \[(.*)\] .*`
 	containerCreatingRe string = `.*ContainerCreating.*`
+	TAIL_LOGS_METHOD    string = "tail"
+	FOLLOW_LOGS_METHOD  string = "follow"
+	MAX_TAIL_LOGGERS    int    = 15
 )
 
 type PodLogs struct {
@@ -37,11 +40,16 @@ type PodLogs struct {
 	SkipVerify    bool
 	EnableWatcher bool
 
+	getLogsMethod string
+
 	db     *memdb.MemDB
 	tick   int
 	sc     *SenderConfig
 	sender *Sender
 	mux    sync.Mutex
+
+	initTime   time.Time
+	updateTime time.Time
 }
 
 // Add adds control channel
@@ -53,17 +61,6 @@ func (p *PodLogs) Add(pod string, ch chan bool) {
 
 // Del deletes pod control channel
 func (p *PodLogs) Del(pod string) {
-	// p.mux.Lock()
-	// new := make(map[string]chan bool)
-	// if p.Channels != nil {
-	// 	for k, v := range p.Channels {
-	// 		if k != pod {
-	// 			new[k] = v
-	// 		}
-	// 	}
-	// }
-	// p.Channels = new
-	// p.mux.Unlock()
 	err := p.DelWatcherFromDB(pod)
 	if err != nil {
 		log.Error(err)
@@ -80,8 +77,8 @@ func (p *PodLogs) PodTicker() {
 		go p.sender.Ticker()
 	}
 
-	ignored := ignoredPods(p.Ignored)
 	ticker := time.NewTicker(time.Second * time.Duration(p.tick))
+	p.updateTime = p.initTime
 	for c := range ticker.C {
 		log.Warn("New tick in pod watcher")
 
@@ -93,19 +90,106 @@ func (p *PodLogs) PodTicker() {
 		}
 
 		log.Infof("Got %d pods", len(pods.Items))
-		for _, pod := range pods.Items {
-			if ok, watcher, err := p.IsWatcherInTheDB(pod.Name); !ok && err == nil && pod.Status.Phase == "Running" && !ignored.isIgnored(pod) {
-				ch, err := p.AddWatcherToDb(pod.Name)
-				if err != nil {
-					log.Error(err)
-					continue
-				}
-				go p.Run(pod.Name, ch, "")
-			} else if ok && err == nil && pod.Status.Phase != "Running" || ok && ignored.isIgnored(pod) {
-				p.Stop(watcher.Chan)
-			} else if err != nil {
+		switch p.getLogsMethod {
+		case FOLLOW_LOGS_METHOD:
+			p.followRun(pods.Items)
+			break
+		case TAIL_LOGS_METHOD:
+			p.tailRun(pods.Items)
+			break
+		default:
+			log.Fatalf("Unsopported get logs method `%s`!", p.getLogsMethod)
+		}
+		p.updateTime = time.Now()
+	}
+}
+
+// followRun runs a new gorutine for each running pod
+// or stops it if the pod is not running
+func (p *PodLogs) followRun(pods []corev1.Pod) {
+	ignored := ignoredPods(p.Ignored)
+	for _, pod := range pods {
+		if ok, watcher, err := p.IsWatcherInTheDB(pod.Name); !ok && err == nil && pod.Status.Phase == "Running" && !ignored.isIgnored(pod) {
+			ch, err := p.AddWatcherToDb(pod.Name)
+			if err != nil {
 				log.Error(err)
+				continue
 			}
+			go p.Run(pod.Name, ch, "")
+		} else if ok && err == nil && pod.Status.Phase != "Running" || ok && ignored.isIgnored(pod) {
+			p.Stop(watcher.Chan)
+		} else if err != nil {
+			log.Error(err)
+		}
+	}
+}
+
+// tailRun get the latest container logs from the since time
+func (p *PodLogs) tailRun(pods []corev1.Pod) {
+	ignored := ignoredPods(p.Ignored)
+	var wg sync.WaitGroup
+	var wgCounter int
+	for _, pod := range pods {
+		if pod.Status.Phase == "Running" && !ignored.isIgnored(pod) {
+			if wgCounter <= MAX_TAIL_LOGGERS {
+				wg.Add(1)
+				go func(pod corev1.Pod) {
+					p.getTailedLogs(pod)
+					wg.Done()
+				}(pod)
+				wgCounter++
+			} else {
+				wg.Wait()
+				wgCounter = 0
+				wg.Add(1)
+				go func(pod corev1.Pod) {
+					p.getTailedLogs(pod)
+					wg.Done()
+				}(pod)
+				wgCounter++
+			}
+		}
+	}
+	wg.Wait()
+}
+
+// getTailedLogs get pod logs from the since time
+func (p *PodLogs) getTailedLogs(pod corev1.Pod) {
+	sinceTime := &metav1.Time{p.updateTime}
+
+	// Get pod from the DB
+	opts := &corev1.PodLogOptions{}
+	opts.Follow = false
+	opts.SinceTime = sinceTime
+
+	resp, err := p.Client.CoreV1().Pods(p.Namespace).GetLogs(pod.Name, opts).Do().Raw()
+	if err != nil {
+		log.Error(err)
+		return
+	}
+
+	p.proceedTailedLogs(resp, pod.Name)
+}
+
+// getWatcherTime returns LogWatcher.updateTime ot time.Time.Now()
+func (p *PodLogs) getWatcherTime(pod corev1.Pod) (time.Time, string) {
+	containers := pod.Spec.Containers
+	if len(containers) > 0 {
+		if w, err := p.GetWatcherFromDB(pod.Name + containers[0].Name); err != nil && w != nil {
+			return w.updateTime, containers[0].Name
+		} else if err != nil {
+			log.Error(err)
+		}
+	}
+	return time.Now(), ""
+}
+
+// proceedTailedLogs ...
+func (p *PodLogs) proceedTailedLogs(logs []byte, pod string) {
+	for _, line := range strings.Split(string(logs), "\n") {
+		if line != "" {
+			p.sender.Send(p.Namespace, pod, line, "")
+			log.Debugf("Line: '%s' sended. For pod %s", line, pod)
 		}
 	}
 }
@@ -328,8 +412,12 @@ func NewPodLogs(namespace string, client *kubernetes.Clientset, config *rest.Con
 		Client:        client,
 		Config:        config,
 		EnableWatcher: isWatcherEnabled(),
+
+		getLogsMethod: getLogsMethodFromFlags(),
 		tick:          GetTickFromFlags(),
 		sc:            GetSenderConfigFromFlags(),
+
+		initTime: time.Now(),
 	}
 
 	db, err := NewDB()
@@ -386,4 +474,10 @@ func (l *LogRequestError) Containers() (containers []string) {
 	}
 
 	return
+}
+
+// getLogsMethodFromFlags find a get-logs-method in the flags
+func getLogsMethodFromFlags() string {
+	method := flag.Lookup("get-logs-method").Value.String()
+	return method
 }

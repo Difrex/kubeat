@@ -12,6 +12,7 @@ var (
 	configPath       string
 	senderConfigPath string
 	namespace        string
+	getLogsMethod    string
 
 	kubeSkipTLSVerify bool
 	enableWatcher     bool
@@ -25,8 +26,11 @@ func init() {
 	flag.StringVar(&configPath, "kube-config", "", "absolute path to the kubectl config")
 	flag.StringVar(&senderConfigPath, "sender-config", "", "absolute path to the sender.json")
 	flag.StringVar(&namespace, "kube-namespace", "", "kubernetes namespace")
+	flag.StringVar(&getLogsMethod, "get-logs-method", "tail", "Method to retrieve a logs from the pod. Can be `tail' or `follow'.")
+
 	flag.BoolVar(&kubeSkipTLSVerify, "kube-skip-tls-verify", false, "skip k8s TLS verification")
 	flag.BoolVar(&enableWatcher, "enable-watcher", false, "enable k8s pod events")
+
 	flag.IntVar(&tickTime, "tick-time", 60, "Metrics tick")
 
 	flag.Parse()
