@@ -132,13 +132,24 @@ func (s *Sender) Send(ns, pod, message, con string) {
 	s.add(l)
 
 	if s.box.len >= s.box.limit {
-		err := s.Client.Push(s.box.con)
+		err := s.Client.Push(s.copyCon())
 		if err != nil {
 			log.Error(err)
 			return
 		}
 		s.clean()
 	}
+}
+
+func (s *Sender) copyCon() map[int64]LogMessage {
+	s.mux.Lock()
+	defer s.mux.Unlock()
+	newMap := make(map[int64]LogMessage)
+	for k, v := range s.box.con {
+		newMap[k] = v
+	}
+
+	return newMap
 }
 
 func (s *Sender) Ticker() {
