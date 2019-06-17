@@ -22,7 +22,6 @@ const (
 )
 
 func main() {
-
 	var client *kubernetes.Clientset
 	var config *rest.Config
 	if isInK8S() {
