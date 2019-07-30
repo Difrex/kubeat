@@ -109,7 +109,9 @@ func (p *PodLogs) PodTicker() {
 func (p *PodLogs) followRun(pods []corev1.Pod) {
 	ignored := ignoredPods(p.Ignored)
 	for _, pod := range pods {
-		if ok, watcher, err := p.IsWatcherInTheDB(pod.Name); !ok && err == nil && pod.Status.Phase == "Running" && !ignored.isIgnored(pod) {
+		if ok, watcher, err := p.IsWatcherInTheDB(pod.Name); !ok && err == nil &&
+			pod.Status.Phase == "Running" &&
+			!ignored.isIgnored(pod) && !checkAnnotation(pod.Annotations) {
 			ch, err := p.AddWatcherToDb(pod.Name)
 			if err != nil {
 				log.Error(err)
@@ -130,7 +132,7 @@ func (p *PodLogs) tailRun(pods []corev1.Pod) {
 	var wg sync.WaitGroup
 	var wgCounter int
 	for _, pod := range pods {
-		if pod.Status.Phase == "Running" && !ignored.isIgnored(pod) {
+		if pod.Status.Phase == "Running" && !ignored.isIgnored(pod) && !checkAnnotation(pod.Annotations) {
 			if wgCounter <= MAX_TAIL_LOGGERS {
 				wg.Add(1)
 				go func(pod corev1.Pod) {
@@ -157,7 +159,6 @@ func (p *PodLogs) tailRun(pods []corev1.Pod) {
 func (p *PodLogs) getTailedLogs(pod corev1.Pod) {
 	sinceTime := &metav1.Time{p.updateTime}
 
-	// Get pod from the DB
 	opts := &corev1.PodLogOptions{}
 	opts.Follow = false
 	opts.SinceTime = sinceTime
@@ -195,6 +196,7 @@ func (p *PodLogs) proceedTailedLogs(logs []byte, pod string) {
 }
 
 // Watch watches for k8s events
+// DEPRECATED
 func (p *PodLogs) Watch() {
 
 	go p.PodTicker()

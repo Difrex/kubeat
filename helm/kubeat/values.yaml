@@ -42,7 +42,7 @@ configmap:
   # Elasticsearch index document type
   doc_type: "k8slog"
   # Bucket soft limit size
-  # Do not create it greter than 4000
+  # Do not create it greter than 1000
   limit: 1000
 
 secret:

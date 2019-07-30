@@ -15,7 +15,6 @@ var (
 	getLogsMethod    string
 
 	kubeSkipTLSVerify bool
-	enableWatcher     bool
 	tickTime          int
 )
 
@@ -29,7 +28,6 @@ func init() {
 	flag.StringVar(&getLogsMethod, "get-logs-method", "tail", "Method to retrieve a logs from the pod. Can be `tail' or `follow'.")
 
 	flag.BoolVar(&kubeSkipTLSVerify, "kube-skip-tls-verify", false, "skip k8s TLS verification")
-	flag.BoolVar(&enableWatcher, "enable-watcher", false, "enable k8s pod events")
 
 	flag.IntVar(&tickTime, "tick-time", 60, "Metrics tick")
 

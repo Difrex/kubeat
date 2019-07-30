@@ -43,11 +43,7 @@ func main() {
 	podLogs.SkipVerify = kubeSkipTLSVerify
 	podLogs.Ignored = ignorePod
 
-	if enableWatcher {
-		go podLogs.Watch()
-	} else {
-		go podLogs.PodTicker()
-	}
+	go podLogs.PodTicker()
 
 	ticker := time.NewTicker(time.Duration(tickTime) * time.Second)
 

@@ -76,10 +76,10 @@ func GetTickFromFlags() int {
 }
 
 func isWatcherEnabled() bool {
-	watcher := flag.Lookup("enable-watcher").Value.String()
-	if watcher == "true" {
-		return true
-	}
+	// watcher := flag.Lookup("enable-watcher").Value.String()
+	// if watcher == "true" {
+	// 	return true
+	// }
 	return false
 }
 
