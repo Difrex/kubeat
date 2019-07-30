@@ -9,7 +9,6 @@ But, K8S has a pods logging API. The Kubeat do per namespace logging simple.
 
 ## How to use
 
-
 Setup it via the Helm.
 ```
 cd helm/kubeat
@@ -34,6 +33,14 @@ Variables:
 | `secret.create`            | `true`                      | Create a secret with username and password                 |
 | `secret.username`          | `"elastic"`                 | Elasticsearch username                                     |
 | `secret.password`          | `"password"`                | Elasticsearch password                                     |
+
+### How to ignore logs from the specific pod
+
+Add annotation to the pod:
+
+```
+kubeat-disable: "yes"
+```
 
 ## Project status
 
